@@ -1,6 +1,7 @@
 """
 Streamlit Cloud Compatible - London Planning Application Monitor
 Simplified version for cloud deployment with sample data
+Version: 2.0 - Cloud Ready (2025-06-03)
 """
 
 import streamlit as st

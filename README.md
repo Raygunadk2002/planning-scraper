@@ -1,6 +1,50 @@
-# London Planning Application Monitor
+# 🏗️ London Planning Application Monitor
 
-A comprehensive Python-based web scraping application that monitors planning applications across London boroughs for environmental monitoring requirements.
+## 🌐 Live Demo on Streamlit Cloud
+
+This application monitors planning applications across London boroughs for environmental monitoring requirements.
+
+### 📊 Features
+- **Interactive Dashboard** with charts and metrics
+- **Data Explorer** with filtering capabilities
+- **Real Westminster Data** including Palace of Westminster and Lords Cricket Ground
+- **Environmental Monitoring** keywords detection
+
+### 🚀 Streamlit Cloud Deployment
+
+**Current Status**: Cloud-ready with sample data
+
+**Requirements**: 
+- streamlit>=1.28.0
+- pandas>=1.3.0
+- plotly>=5.0.0
+
+**Sample Applications Include**:
+- Palace of Westminster structural monitoring (25/03344/LBC)
+- Lords Cricket Ground monitoring strategy (25/02299/ADFULL)
+- Berkeley Square noise monitoring (17/08991/ADFULL)
+- Environmental monitoring installations
+
+### 🔧 Local Development
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the app
+streamlit run streamlit_app.py
+```
+
+### 📈 Production System
+
+The full production system includes:
+- Westminster borough scraper (operational)
+- Anti-bot protection bypass
+- SQLite database integration
+- Real-time scraping capabilities
+- 29 monitoring applications extracted
+
+For production deployment, see the local system files.
 
 ## 🎯 Overview
 
