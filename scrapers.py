@@ -139,10 +139,10 @@ class IdoxScraper(BaseScraper):
             
             # Perform search
             self.log_activity(f"🌐 Making POST request to {self.search_url}")
-            response = self.scraping_utils.post_request(
+            response = self.scraping_utils.post_request_with_session_init(
                 self.search_url,
-                data=search_data,
-                domain=urlparse(self.base_url).netloc
+                search_data,
+                urlparse(self.base_url).netloc
             )
             
             if not response:
@@ -338,10 +338,10 @@ class SouthwarkScraper(BaseScraper):
             }
             
             self.log_activity(f"🌐 Making POST request to Southwark portal")
-            response = self.scraping_utils.post_request(
+            response = self.scraping_utils.post_request_with_session_init(
                 self.search_url,
-                data=search_data,
-                domain=urlparse(self.base_url).netloc
+                search_data,
+                urlparse(self.base_url).netloc
             )
             
             if not response:

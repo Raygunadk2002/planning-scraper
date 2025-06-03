@@ -18,8 +18,8 @@ MONITORING_KEYWORDS = [
 BOROUGHS_CONFIG = {
     "Camden": {
         "name": "Camden",
-        "base_url": "https://camdenpas.camden.gov.uk",
-        "search_url": "https://camdenpas.camden.gov.uk/online-applications/search.do?action=simple&searchType=Application",
+        "base_url": "https://accountforms.camden.gov.uk",
+        "search_url": "https://accountforms.camden.gov.uk/planning-search/",
         "search_method": "form_based"
     },
     "Westminster": {

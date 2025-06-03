@@ -22,11 +22,24 @@ class ScrapingUtils:
     """Utility class for web scraping operations"""
     
     def __init__(self):
-        self.session = requests.Session()
+        self.request_counts = {}
+        self.last_request_times = {}
+        self.session = requests.Session()  # Use session for cookie persistence
+        
+        # Enhanced headers to look more like a real browser
         self.session.headers.update({
-            'User-Agent': SCRAPING_CONFIG['user_agent']
+            'User-Agent': SCRAPING_CONFIG['user_agent'],
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0'
         })
-        self.last_request_time = {}
     
     def can_fetch(self, url: str, user_agent: str = '*') -> bool:
         """Check if we can fetch the URL according to robots.txt"""
@@ -52,8 +65,8 @@ class ScrapingUtils:
             domain = urlparse(url).netloc
         
         # Implement rate limiting
-        if domain in self.last_request_time:
-            time_since_last = time.time() - self.last_request_time[domain]
+        if domain in self.last_request_times:
+            time_since_last = time.time() - self.last_request_times[domain]
             if time_since_last < SCRAPING_CONFIG['request_delay']:
                 sleep_time = SCRAPING_CONFIG['request_delay'] - time_since_last
                 logger.info(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
@@ -73,7 +86,7 @@ class ScrapingUtils:
                     **kwargs
                 )
                 
-                self.last_request_time[domain] = time.time()
+                self.last_request_times[domain] = time.time()
                 
                 if response.status_code == 200:
                     return response
@@ -97,8 +110,8 @@ class ScrapingUtils:
             domain = urlparse(url).netloc
         
         # Implement rate limiting
-        if domain in self.last_request_time:
-            time_since_last = time.time() - self.last_request_time[domain]
+        if domain in self.last_request_times:
+            time_since_last = time.time() - self.last_request_times[domain]
             if time_since_last < SCRAPING_CONFIG['request_delay']:
                 sleep_time = SCRAPING_CONFIG['request_delay'] - time_since_last
                 logger.info(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
@@ -114,7 +127,7 @@ class ScrapingUtils:
                     **kwargs
                 )
                 
-                self.last_request_time[domain] = time.time()
+                self.last_request_times[domain] = time.time()
                 
                 if response.status_code == 200:
                     return response
@@ -131,6 +144,86 @@ class ScrapingUtils:
                     time.sleep(2 ** attempt)  # Exponential backoff
         
         return None
+
+    def initialize_session_for_domain(self, domain: str, search_url: str) -> bool:
+        """Initialize session by visiting the search page first to get cookies/tokens"""
+        try:
+            logger.info(f"Initializing session for {domain}")
+            
+            # Visit the main search page first to get session cookies
+            base_url = f"https://{domain}"
+            response = self.session.get(base_url, timeout=SCRAPING_CONFIG['timeout'])
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully visited {domain} homepage")
+                
+                # Now visit the search page to get any search-specific cookies/tokens
+                time.sleep(2)  # Wait a bit to look more human
+                search_response = self.session.get(search_url, timeout=SCRAPING_CONFIG['timeout'])
+                
+                if search_response.status_code == 200:
+                    logger.info(f"Successfully visited search page for {domain}")
+                    return True
+                else:
+                    logger.warning(f"Search page returned {search_response.status_code} for {domain}")
+                    return False
+            else:
+                logger.warning(f"Homepage returned {response.status_code} for {domain}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error initializing session for {domain}: {e}")
+            return False
+    
+    def post_request_with_session_init(self, url: str, data: dict, domain: str) -> requests.Response:
+        """Make POST request with session initialization if needed"""
+        try:
+            # First try to initialize session
+            if domain not in self.last_request_times:
+                logger.info(f"First request to {domain}, initializing session...")
+                self.initialize_session_for_domain(domain, url)
+            
+            # Update headers for POST request
+            post_headers = {
+                'Referer': url,
+                'Origin': f"https://{domain}",
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-User': '?1'
+            }
+            
+            # Rate limiting
+            if domain in self.last_request_times:
+                time_since_last = time.time() - self.last_request_times[domain]
+                if time_since_last < SCRAPING_CONFIG['request_delay']:
+                    sleep_time = SCRAPING_CONFIG['request_delay'] - time_since_last
+                    logger.info(f"Rate limiting: waiting {sleep_time:.1f}s for {domain}")
+                    time.sleep(sleep_time)
+            
+            # Make the POST request
+            logger.info(f"Making POST request to {url}")
+            response = self.session.post(
+                url, 
+                data=data, 
+                headers=post_headers,
+                timeout=SCRAPING_CONFIG['timeout'],
+                allow_redirects=True
+            )
+            
+            self.last_request_times[domain] = time.time()
+            
+            logger.info(f"POST response: {response.status_code} from {domain}")
+            
+            if response.status_code in [403, 429]:
+                logger.warning(f"Blocked by {domain} (status {response.status_code}). May need manual intervention.")
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"POST request error: {e}")
+            return None
 
 class TextProcessor:
     """Utility class for text processing and keyword detection"""
