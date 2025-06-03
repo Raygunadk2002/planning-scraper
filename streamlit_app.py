@@ -10,11 +10,15 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
 import threading
+import logging
 from typing import List, Dict
 
 from config import STREAMLIT_CONFIG, BOROUGHS_CONFIG, MONITORING_KEYWORDS, EXPORT_CONFIG
 from database import PlanningDatabase
 from scraper_manager import ScrapingManager, ScheduledScraper
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Configure Streamlit page
 st.set_page_config(
@@ -296,8 +300,8 @@ def show_scraping_control():
         # Real-time Status Display
         st.subheader("🔴 Live Status")
         
-        # Top status row
-        col1, col2, col3, col4 = st.columns(4)
+        # Top status row with enhanced metrics
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
             if status['is_running']:
@@ -315,7 +319,45 @@ def show_scraping_control():
             st.metric("Active Boroughs", active_boroughs)
         
         with col4:
-            st.metric("Keywords", len(st.session_state.current_scraping_keywords))
+            total_requests = status.get('total_requests_made', 0)
+            st.metric("HTTP Requests", total_requests)
+        
+        with col5:
+            total_pages = status.get('total_pages_processed', 0)
+            st.metric("Pages Processed", total_pages)
+        
+        # Live URL Tracking Section (only show when scraping)
+        if status['is_running'] and status.get('url_tracking'):
+            st.subheader("🌐 Live URL Activity")
+            
+            url_cols = st.columns(2)
+            col_idx = 0
+            
+            for borough_name, url_info in status['url_tracking'].items():
+                with url_cols[col_idx % 2]:
+                    if url_info.get('current_url'):
+                        st.info(f"**{borough_name}**")
+                        st.caption(f"🔄 {url_info.get('action', 'Processing')}")
+                        
+                        # Show truncated URL with link
+                        url = url_info['current_url']
+                        if len(url) > 60:
+                            display_url = url[:60] + "..."
+                        else:
+                            display_url = url
+                        
+                        st.code(display_url, language=None)
+                        
+                        # Time since last update
+                        if url_info.get('last_updated'):
+                            try:
+                                last_update = datetime.fromisoformat(url_info['last_updated'])
+                                seconds_ago = (datetime.now() - last_update).total_seconds()
+                                st.caption(f"⏱️ {seconds_ago:.1f}s ago")
+                            except:
+                                pass
+                
+                col_idx += 1
         
         # Live Progress Section
         if status['is_running']:
@@ -329,49 +371,132 @@ def show_scraping_control():
             overall_progress = completed_count / borough_count if borough_count > 0 else 0
             st.progress(overall_progress, text=f"Overall Progress: {completed_count}/{borough_count} boroughs")
             
-            # Individual borough progress
+            # Individual borough progress with enhanced details
             st.write("**Borough Progress:**")
             
             for borough_name, borough_info in status.get('boroughs', {}).items():
-                col1, col2, col3 = st.columns([2, 1, 1])
+                if borough_info.get('status') in ['running', 'completed', 'error']:
+                    with st.container():
+                        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                        
+                        with col1:
+                            if borough_info.get('status') == 'running':
+                                # Show detailed running status
+                                current_keyword = borough_info.get('current_keyword', 'Initializing')
+                                current_phase = borough_info.get('current_phase', 'unknown')
+                                
+                                st.write(f"🔄 **{borough_name}**: {current_phase.title()}")
+                                
+                                if current_keyword:
+                                    st.caption(f"🔍 Keyword: {current_keyword}")
+                                
+                                # Show individual progress bar
+                                if borough_info.get('total_keywords', 0) > 0:
+                                    keyword_progress = borough_info.get('keywords_completed', 0) / borough_info['total_keywords']
+                                    st.progress(
+                                        keyword_progress, 
+                                        text=f"{borough_info.get('keywords_completed', 0)}/{borough_info['total_keywords']} keywords"
+                                    )
+                                
+                            elif borough_info.get('status') == 'completed':
+                                st.write(f"✅ **{borough_name}**: Complete")
+                                elapsed = borough_info.get('elapsed_formatted', '00:00')
+                                st.caption(f"⏱️ Completed in {elapsed}")
+                                
+                            elif borough_info.get('status') == 'error':
+                                st.write(f"❌ **{borough_name}**: Error")
+                                error = borough_info.get('last_error', 'Unknown error')[:50]
+                                st.caption(f"❌ {error}...")
+                        
+                        with col2:
+                            apps_found = borough_info.get('applications_found', 0)
+                            st.metric("Apps", apps_found, label_visibility="collapsed")
+                        
+                        with col3:
+                            requests_made = borough_info.get('requests_made', 0)
+                            st.metric("Requests", requests_made, label_visibility="collapsed")
+                        
+                        with col4:
+                            if borough_info.get('status') == 'running' and borough_info.get('elapsed_formatted'):
+                                st.metric("Time", borough_info['elapsed_formatted'], label_visibility="collapsed")
+                            elif borough_info.get('last_run'):
+                                last_run = datetime.fromisoformat(borough_info['last_run']).strftime("%H:%M:%S")
+                                st.write(f"🕐 {last_run}")
+        
+        # Ultra-Live Activity Stream
+        st.subheader("🚀 Live Activity Stream")
+        
+        # Auto-refresh controls
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            auto_refresh = st.checkbox("🔄 Ultra-fast refresh (every 2 seconds)", value=True)
+        with col2:
+            if st.button("⚡ Refresh Now", use_container_width=True):
+                st.rerun()
+        with col3:
+            if st.button("🗑️ Clear Stream", use_container_width=True):
+                if hasattr(st.session_state.scraping_manager, 'live_activity'):
+                    st.session_state.scraping_manager.live_activity = []
+                st.rerun()
+        
+        # Live activity display
+        activity_container = st.container()
+        with activity_container:
+            live_activities = status.get('live_activity', [])
+            
+            if live_activities:
+                st.write("**Recent Activity (Live):**")
                 
-                with col1:
-                    if borough_info.get('status') == 'running':
-                        st.write(f"🔄 **{borough_name}**: Searching keywords...")
-                        # Show current keyword if available
-                        current_keyword = st.session_state.scraping_progress.get(borough_name, {}).get('current_keyword')
-                        if current_keyword:
-                            st.caption(f"Current: {current_keyword}")
-                    elif borough_info.get('status') == 'completed':
-                        st.write(f"✅ **{borough_name}**: Complete")
-                    elif borough_info.get('status') == 'error':
-                        st.write(f"❌ **{borough_name}**: Error")
+                # Create scrollable activity feed
+                for activity in reversed(live_activities[-15:]):  # Show last 15, newest first
+                    timestamp = activity.get('timestamp', '')
+                    message = activity.get('message', '')
+                    borough = activity.get('borough', '')
+                    level = activity.get('level', 'info')
+                    
+                    # Format the log entry
+                    if borough:
+                        formatted_message = f"[{timestamp}] **{borough}**: {message}"
                     else:
-                        st.write(f"⏸️ **{borough_name}**: {borough_info.get('status', 'Unknown')}")
+                        formatted_message = f"[{timestamp}] {message}"
+                    
+                    # Display with appropriate styling based on level
+                    if level == "error":
+                        st.error(formatted_message)
+                    elif level == "warning":
+                        st.warning(formatted_message)
+                    elif "✅" in message or "🎉" in message:
+                        st.success(formatted_message)
+                    elif "🔍" in message or "🕷️" in message or "📄" in message:
+                        st.info(formatted_message)
+                    else:
+                        st.write(formatted_message)
                 
-                with col2:
-                    apps_found = borough_info.get('applications_found', 0)
-                    st.write(f"Apps: {apps_found}")
-                
-                with col3:
-                    if borough_info.get('last_run'):
-                        last_run = datetime.fromisoformat(borough_info['last_run']).strftime("%H:%M:%S")
-                        st.write(f"Last: {last_run}")
+                # Auto-scroll indicator
+                if auto_refresh and status['is_running']:
+                    st.caption("🔄 Auto-refreshing... (disable to stop)")
+                    
+            else:
+                st.info("📭 No live activity yet. Start scraping to see real-time crawling updates!")
+        
+        # Auto-refresh logic
+        if auto_refresh and status['is_running']:
+            time.sleep(2)  # Fast refresh every 2 seconds
+            st.rerun()
         
         # Current Keywords Being Searched
         st.subheader("🔍 Current Search Keywords")
         
-        # Display keywords in a nice grid
+        # Display keywords in a nice grid with enhanced status
         keyword_cols = st.columns(3)
+        current_keywords = status.get('current_keywords', [])
+        
         for i, keyword in enumerate(st.session_state.current_scraping_keywords):
             with keyword_cols[i % 3]:
                 # Show if this keyword is currently being searched
-                is_active = any(
-                    st.session_state.scraping_progress.get(borough, {}).get('current_keyword') == keyword
-                    for borough in BOROUGHS_CONFIG.keys()
-                )
-                if is_active:
+                if keyword in current_keywords:
                     st.success(f"🔍 {keyword}")
+                    st.caption("Currently searching")
                 else:
                     st.info(f"📝 {keyword}")
         
@@ -420,19 +545,11 @@ def show_scraping_control():
                             def scraping_with_progress():
                                 try:
                                     st.session_state.scraping_manager.scrape_all_boroughs(keywords)
-                                    st.session_state.scraping_logs.append(
-                                        f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Scraping completed for all boroughs"
-                                    )
                                 except Exception as e:
-                                    st.session_state.scraping_logs.append(
-                                        f"[{datetime.now().strftime('%H:%M:%S')}] ❌ Scraping error: {str(e)}"
-                                    )
+                                    pass  # Errors are now handled in the manager's live activity
                             
                             threading.Thread(target=scraping_with_progress, daemon=True).start()
                             st.success("🚀 Scraping started for all boroughs!")
-                            st.session_state.scraping_logs.append(
-                                f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Started scraping all boroughs"
-                            )
                         else:
                             result = st.session_state.scraping_manager.scrape_single_borough(
                                 selected_borough, keywords
@@ -440,14 +557,8 @@ def show_scraping_control():
                             if result['success']:
                                 st.success(f"✅ Scraping completed for {selected_borough}")
                                 st.write(f"Found {result['new_applications']} new applications")
-                                st.session_state.scraping_logs.append(
-                                    f"[{datetime.now().strftime('%H:%M:%S')}] ✅ {selected_borough}: {result['new_applications']} new apps"
-                                )
                             else:
                                 st.error(f"❌ Scraping failed: {result.get('error', 'Unknown error')}")
-                                st.session_state.scraping_logs.append(
-                                    f"[{datetime.now().strftime('%H:%M:%S')}] ❌ {selected_borough}: {result.get('error')}"
-                                )
                     st.rerun()
                 else:
                     st.warning("Scraping is already running!")
@@ -456,9 +567,6 @@ def show_scraping_control():
             if st.button("⏹️ Stop", use_container_width=True):
                 st.session_state.scraping_manager.stop_scraping()
                 st.info("Stop signal sent")
-                st.session_state.scraping_logs.append(
-                    f"[{datetime.now().strftime('%H:%M:%S')}] ⏹️ Stop signal sent"
-                )
                 st.rerun()
         
         with col3:
@@ -469,85 +577,26 @@ def show_scraping_control():
             if st.button("🧹 Reset", use_container_width=True):
                 st.session_state.scraping_manager.initialize_scrapers()
                 st.success("Scrapers reset")
-                st.session_state.scraping_logs.append(
-                    f"[{datetime.now().strftime('%H:%M:%S')}] 🧹 Scrapers initialized"
-                )
                 st.rerun()
-        
-        # Live Activity Log
-        st.subheader("📊 Live Activity Log")
-        
-        # Auto-refresh toggle
-        auto_refresh = st.checkbox("🔄 Auto-refresh (every 5 seconds)", value=True)
-        
-        if auto_refresh:
-            # Auto-refresh using experimental_rerun with timer
-            if status['is_running']:
-                time.sleep(2)  # Small delay to prevent too frequent updates
-                st.rerun()
-        
-        # Show recent logs
-        log_container = st.container()
-        with log_container:
-            if st.session_state.scraping_logs:
-                # Show last 10 log entries
-                recent_logs = st.session_state.scraping_logs[-10:]
-                for log_entry in reversed(recent_logs):  # Show newest first
-                    if "✅" in log_entry:
-                        st.success(log_entry)
-                    elif "❌" in log_entry:
-                        st.error(log_entry)
-                    elif "🚀" in log_entry:
-                        st.info(log_entry)
-                    else:
-                        st.write(log_entry)
-            else:
-                st.info("No activity logs yet. Start scraping to see live updates!")
-        
-        # Clear logs button
-        if st.button("🗑️ Clear Logs"):
-            st.session_state.scraping_logs = []
-            st.rerun()
-        
-        # Detailed Borough Status Table
-        st.subheader("🏛️ Detailed Borough Status")
-        
-        if status.get('boroughs'):
-            borough_data = []
-            for borough, info in status['boroughs'].items():
-                status_emoji = {
-                    'running': '🔄',
-                    'completed': '✅', 
-                    'error': '❌',
-                    'initialized': '⏸️'
-                }.get(info.get('status', 'unknown'), '❓')
-                
-                borough_data.append({
-                    'Borough': borough,
-                    'Status': f"{status_emoji} {info.get('status', 'Unknown').title()}",
-                    'Last Run': info.get('last_run', 'Never'),
-                    'Apps Found': info.get('applications_found', 0),
-                    'Last Error': info.get('last_error', 'None')[:50] + ('...' if len(str(info.get('last_error', ''))) > 50 else '')
-                })
-            
-            status_df = pd.DataFrame(borough_data)
-            st.dataframe(
-                status_df, 
-                use_container_width=True,
-                column_config={
-                    'Borough': st.column_config.TextColumn('Borough', width='medium'),
-                    'Status': st.column_config.TextColumn('Status', width='medium'),
-                    'Last Run': st.column_config.TextColumn('Last Run', width='medium'),
-                    'Apps Found': st.column_config.NumberColumn('Apps Found', width='small'),
-                    'Last Error': st.column_config.TextColumn('Last Error', width='large')
-                }
-            )
-        else:
-            st.info("No borough status available. Click 'Reset' to initialize scrapers.")
     
     except Exception as e:
         st.error(f"Error loading scraping status: {e}")
         logger.error(f"Scraping control page error: {e}")
+        
+        # Show basic error recovery options
+        st.subheader("🔧 Error Recovery")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Retry Loading Status"):
+                st.rerun()
+        with col2:
+            if st.button("🧹 Reinitialize System"):
+                try:
+                    st.session_state.scraping_manager = ScrapingManager()
+                    st.success("System reinitialized")
+                    st.rerun()
+                except Exception as init_error:
+                    st.error(f"Failed to reinitialize: {init_error}")
 
 def show_export_page():
     """Export data page"""

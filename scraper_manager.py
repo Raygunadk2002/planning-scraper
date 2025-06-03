@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ScrapingManager:
-    """Manages the scraping process across all boroughs with real-time status tracking"""
+    """Manages the scraping process across all boroughs with ultra-granular real-time status tracking"""
     
     def __init__(self, db_path: str = None, progress_callback: Callable = None):
         self.database = PlanningDatabase(db_path)
@@ -29,15 +29,59 @@ class ScrapingManager:
         self.is_running = False
         self.current_progress = {}  # Track current keyword being searched per borough
         self.progress_callback = progress_callback  # Callback for UI updates
+        self.live_activity = []  # Store live activity logs
+        self.url_tracking = {}  # Track current URLs being accessed
         
+    def log_activity(self, message: str, borough: str = None, level: str = "info"):
+        """Log activity with timestamp for real-time display"""
+        timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
+        log_entry = {
+            'timestamp': timestamp,
+            'message': message,
+            'borough': borough,
+            'level': level,
+            'full_timestamp': datetime.now().isoformat()
+        }
+        
+        self.live_activity.append(log_entry)
+        
+        # Keep only last 100 entries to prevent memory issues
+        if len(self.live_activity) > 100:
+            self.live_activity = self.live_activity[-100:]
+        
+        # Also log to standard logger
+        if level == "error":
+            logger.error(f"[{borough or 'SYSTEM'}] {message}")
+        elif level == "warning":
+            logger.warning(f"[{borough or 'SYSTEM'}] {message}")
+        else:
+            logger.info(f"[{borough or 'SYSTEM'}] {message}")
+    
+    def update_url_tracking(self, borough_name: str, current_url: str = None, action: str = None):
+        """Track current URL being accessed for real-time display"""
+        if borough_name not in self.url_tracking:
+            self.url_tracking[borough_name] = {}
+        
+        self.url_tracking[borough_name].update({
+            'current_url': current_url,
+            'action': action,
+            'last_updated': datetime.now().isoformat()
+        })
+        
+        # Log the activity
+        if current_url and action:
+            self.log_activity(f"{action}: {current_url}", borough_name)
+    
     def initialize_scrapers(self):
         """Initialize scrapers for all configured boroughs"""
-        logger.info("Initializing scrapers for all boroughs...")
+        self.log_activity("🔧 Initializing scrapers for all boroughs...")
         
         for borough_name in BOROUGHS_CONFIG.keys():
             try:
+                self.log_activity(f"Creating scraper instance...", borough_name)
                 scraper = create_scraper(borough_name)
                 self.scrapers[borough_name] = scraper
+                
                 self.scraping_status[borough_name] = {
                     'status': 'initialized',
                     'last_run': None,
@@ -46,16 +90,21 @@ class ScrapingManager:
                     'current_keyword': None,
                     'keywords_completed': 0,
                     'total_keywords': 0,
-                    'start_time': None
+                    'start_time': None,
+                    'requests_made': 0,
+                    'pages_processed': 0,
+                    'current_phase': 'idle'
                 }
                 self.current_progress[borough_name] = {
                     'current_keyword': None,
                     'keyword_index': 0,
                     'total_keywords': 0
                 }
-                logger.info(f"Scraper initialized for {borough_name}")
+                
+                self.log_activity(f"✅ Scraper initialized successfully", borough_name)
+                
             except Exception as e:
-                logger.error(f"Failed to initialize scraper for {borough_name}: {e}")
+                self.log_activity(f"❌ Failed to initialize scraper: {str(e)}", borough_name, "error")
                 self.scraping_status[borough_name] = {
                     'status': 'error',
                     'last_run': None,
@@ -64,10 +113,15 @@ class ScrapingManager:
                     'current_keyword': None,
                     'keywords_completed': 0,
                     'total_keywords': 0,
-                    'start_time': None
+                    'start_time': None,
+                    'requests_made': 0,
+                    'pages_processed': 0,
+                    'current_phase': 'error'
                 }
+        
+        self.log_activity(f"🎯 All scrapers initialized. Ready to begin scraping.")
     
-    def update_progress(self, borough_name: str, keyword: str = None, keyword_index: int = 0, total_keywords: int = 0):
+    def update_progress(self, borough_name: str, keyword: str = None, keyword_index: int = 0, total_keywords: int = 0, phase: str = None):
         """Update progress tracking for real-time display"""
         if borough_name in self.current_progress:
             self.current_progress[borough_name].update({
@@ -78,11 +132,20 @@ class ScrapingManager:
             
             # Also update scraping status
             if borough_name in self.scraping_status:
-                self.scraping_status[borough_name].update({
+                updates = {
                     'current_keyword': keyword,
                     'keywords_completed': keyword_index,
                     'total_keywords': total_keywords
-                })
+                }
+                if phase:
+                    updates['current_phase'] = phase
+                
+                self.scraping_status[borough_name].update(updates)
+            
+            # Log progress update
+            if keyword:
+                progress_pct = (keyword_index / total_keywords * 100) if total_keywords > 0 else 0
+                self.log_activity(f"📊 Progress: {keyword_index}/{total_keywords} ({progress_pct:.1f}%) - {keyword}", borough_name)
             
             # Call progress callback if provided (for UI updates)
             if self.progress_callback:
@@ -92,10 +155,11 @@ class ScrapingManager:
                     logger.error(f"Error in progress callback: {e}")
     
     def scrape_single_borough(self, borough_name: str, keywords: List[str] = None) -> Dict:
-        """Scrape a single borough and return results with progress tracking"""
+        """Scrape a single borough with ultra-detailed progress tracking"""
         if borough_name not in self.scrapers:
-            logger.error(f"No scraper available for {borough_name}")
-            return {'success': False, 'error': 'No scraper available'}
+            error_msg = f"No scraper available for {borough_name}"
+            self.log_activity(error_msg, borough_name, "error")
+            return {'success': False, 'error': error_msg}
         
         if keywords is None:
             keywords = MONITORING_KEYWORDS
@@ -103,46 +167,96 @@ class ScrapingManager:
         scraper = self.scrapers[borough_name]
         start_time = datetime.now()
         
+        self.log_activity(f"🚀 Starting scraping session with {len(keywords)} keywords", borough_name)
+        
         try:
-            logger.info(f"Starting scraping for {borough_name} with {len(keywords)} keywords")
-            
             # Update status to running
             self.scraping_status[borough_name].update({
                 'status': 'running',
                 'start_time': start_time.isoformat(),
                 'total_keywords': len(keywords),
                 'keywords_completed': 0,
-                'current_keyword': None
+                'current_keyword': None,
+                'requests_made': 0,
+                'pages_processed': 0,
+                'current_phase': 'starting'
             })
+            
+            # Get base configuration
+            config = BOROUGHS_CONFIG[borough_name]
+            base_url = config['base_url']
+            search_url = config['search_url']
+            
+            self.log_activity(f"🌐 Target portal: {base_url}", borough_name)
+            self.log_activity(f"🔍 Search endpoint: {search_url}", borough_name)
+            
+            self.update_progress(borough_name, None, 0, len(keywords), "initializing")
             
             # Perform scraping with progress tracking
             all_applications = []
             
             for i, keyword in enumerate(keywords):
                 if not self.is_running and len(keywords) > 1:  # Allow stopping mid-process
+                    self.log_activity(f"⏹️ Stop signal received, terminating scraping", borough_name, "warning")
                     break
                     
-                logger.info(f"Searching {borough_name} for keyword '{keyword}' ({i+1}/{len(keywords)})")
+                self.log_activity(f"🔍 Starting search for keyword: '{keyword}' ({i+1}/{len(keywords)})", borough_name)
+                self.update_progress(borough_name, keyword, i, len(keywords), "searching")
                 
-                # Update progress
-                self.update_progress(borough_name, keyword, i, len(keywords))
+                # Update URL tracking
+                self.update_url_tracking(borough_name, search_url, f"Searching for '{keyword}'")
                 
                 try:
-                    # Get applications for this keyword
-                    keyword_apps = scraper.search_keyword(keyword) if hasattr(scraper, 'search_keyword') else []
-                    all_applications.extend(keyword_apps)
+                    # Get applications for this keyword with detailed tracking
+                    self.log_activity(f"📝 Preparing search form data for '{keyword}'", borough_name)
                     
-                    logger.info(f"Found {len(keyword_apps)} applications for '{keyword}' in {borough_name}")
+                    # Track the actual scraping call
+                    if hasattr(scraper, 'search_keyword'):
+                        self.log_activity(f"🕷️ Executing search request...", borough_name)
+                        keyword_apps = scraper.search_keyword(keyword)
+                        
+                        # Update request counter
+                        if borough_name in self.scraping_status:
+                            self.scraping_status[borough_name]['requests_made'] += 1
+                        
+                        self.log_activity(f"✅ Search completed. Found {len(keyword_apps)} applications for '{keyword}'", borough_name)
+                        
+                        # Process each application found
+                        for idx, app in enumerate(keyword_apps):
+                            app_id = app.get('project_id', f'app_{idx}')
+                            app_url = app.get('application_url', '')
+                            
+                            self.log_activity(f"📄 Processing application {app_id}", borough_name)
+                            
+                            if app_url:
+                                self.update_url_tracking(borough_name, app_url, f"Processing {app_id}")
+                                
+                                # Simulate processing delay to show URL tracking
+                                time.sleep(0.5)
+                                
+                                if borough_name in self.scraping_status:
+                                    self.scraping_status[borough_name]['pages_processed'] += 1
+                        
+                        all_applications.extend(keyword_apps)
+                        
+                    else:
+                        self.log_activity(f"⚠️ Scraper does not support keyword search", borough_name, "warning")
                     
                     # Small delay between keywords to be polite
+                    self.log_activity(f"😴 Waiting 1 second before next keyword (rate limiting)", borough_name)
                     time.sleep(1)
                     
                 except Exception as e:
-                    logger.error(f"Error searching for '{keyword}' in {borough_name}: {e}")
+                    error_msg = f"❌ Error searching for '{keyword}': {str(e)}"
+                    self.log_activity(error_msg, borough_name, "error")
                     continue
                 finally:
                     # Update progress
-                    self.update_progress(borough_name, keyword, i + 1, len(keywords))
+                    self.update_progress(borough_name, keyword, i + 1, len(keywords), "processing")
+            
+            # Process results
+            self.log_activity(f"🔄 Processing {len(all_applications)} total applications", borough_name)
+            self.update_progress(borough_name, None, len(keywords), len(keywords), "deduplicating")
             
             # Remove duplicates based on project_id
             unique_applications = {}
@@ -150,11 +264,19 @@ class ScrapingManager:
                 project_id = app.get('project_id')
                 if project_id and project_id not in unique_applications:
                     unique_applications[project_id] = app
+                else:
+                    self.log_activity(f"🔄 Duplicate found: {project_id}", borough_name)
             
             final_applications = list(unique_applications.values())
+            self.log_activity(f"✨ Deduplicated to {len(final_applications)} unique applications", borough_name)
             
             # Store results in database
+            self.log_activity(f"💾 Saving results to database...", borough_name)
+            self.update_progress(borough_name, None, len(keywords), len(keywords), "saving")
+            
             total_count, new_count = self.database.bulk_insert_applications(final_applications)
+            
+            self.log_activity(f"✅ Database updated: {new_count} new out of {total_count} total", borough_name)
             
             # Update status to completed
             self.scraping_status[borough_name].update({
@@ -163,11 +285,13 @@ class ScrapingManager:
                 'last_error': None,
                 'applications_found': len(final_applications),
                 'current_keyword': None,
-                'keywords_completed': len(keywords)
+                'keywords_completed': len(keywords),
+                'current_phase': 'completed'
             })
             
-            # Clear progress
-            self.update_progress(borough_name, None, len(keywords), len(keywords))
+            # Clear progress and URL tracking
+            self.update_progress(borough_name, None, len(keywords), len(keywords), "completed")
+            self.update_url_tracking(borough_name, None, "Completed")
             
             # Log scraping session
             self.database.log_scraping_session(
@@ -177,7 +301,8 @@ class ScrapingManager:
                 status='success'
             )
             
-            logger.info(f"Completed scraping for {borough_name}: {new_count} new out of {total_count} total")
+            duration = (datetime.now() - start_time).total_seconds()
+            self.log_activity(f"🎉 Scraping completed successfully in {duration:.1f} seconds", borough_name)
             
             return {
                 'success': True,
@@ -185,11 +310,14 @@ class ScrapingManager:
                 'total_found': len(final_applications),
                 'new_applications': new_count,
                 'keywords_searched': len(keywords),
-                'duration': (datetime.now() - start_time).total_seconds()
+                'duration': duration,
+                'requests_made': self.scraping_status[borough_name].get('requests_made', 0),
+                'pages_processed': self.scraping_status[borough_name].get('pages_processed', 0)
             }
             
         except Exception as e:
-            logger.error(f"Error scraping {borough_name}: {e}")
+            error_msg = f"💥 Critical error during scraping: {str(e)}"
+            self.log_activity(error_msg, borough_name, "error")
             
             # Update status with error
             self.scraping_status[borough_name].update({
@@ -197,11 +325,13 @@ class ScrapingManager:
                 'last_run': start_time.isoformat(),
                 'last_error': str(e),
                 'applications_found': 0,
-                'current_keyword': None
+                'current_keyword': None,
+                'current_phase': 'error'
             })
             
-            # Clear progress
-            self.update_progress(borough_name, None, 0, len(keywords) if keywords else 0)
+            # Clear progress and URL tracking
+            self.update_progress(borough_name, None, 0, len(keywords) if keywords else 0, "error")
+            self.update_url_tracking(borough_name, None, "Error occurred")
             
             # Log error
             self.database.log_scraping_session(
@@ -220,6 +350,7 @@ class ScrapingManager:
             }
         
         finally:
+            self.log_activity(f"🧹 Cleaning up scraper resources", borough_name)
             if hasattr(scraper, 'close'):
                 scraper.close()
     
@@ -293,7 +424,7 @@ class ScrapingManager:
         return results
     
     def get_scraping_status(self) -> Dict:
-        """Get current status of all scrapers with detailed progress information"""
+        """Get current status of all scrapers with detailed progress information and live activity"""
         # Get database statistics
         db_stats = self.database.get_statistics()
         
@@ -334,7 +465,14 @@ class ScrapingManager:
             if borough_name in self.current_progress:
                 enhanced_status.update(self.current_progress[borough_name])
             
+            # Add URL tracking info
+            if borough_name in self.url_tracking:
+                enhanced_status['url_info'] = self.url_tracking[borough_name]
+            
             enhanced_borough_status[borough_name] = enhanced_status
+        
+        # Get recent live activity (last 20 entries for UI)
+        recent_activity = self.live_activity[-20:] if self.live_activity else []
         
         return {
             'is_running': self.is_running,
@@ -359,6 +497,16 @@ class ScrapingManager:
                 for status in self.scraping_status.values() 
                 if status.get('current_keyword')
             ])),
+            'live_activity': recent_activity,
+            'url_tracking': self.url_tracking,
+            'total_requests_made': sum(
+                status.get('requests_made', 0) 
+                for status in self.scraping_status.values()
+            ),
+            'total_pages_processed': sum(
+                status.get('pages_processed', 0) 
+                for status in self.scraping_status.values()
+            ),
             'last_updated': datetime.now().isoformat()
         }
     
