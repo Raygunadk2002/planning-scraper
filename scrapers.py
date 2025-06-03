@@ -9,16 +9,24 @@ from typing import List, Dict, Optional
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timedelta
 import re
+import os
 
 import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
+
+# Try to import Selenium - optional dependency
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException
+    from webdriver_manager.chrome import ChromeDriverManager
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
 
 from config import BOROUGHS_CONFIG, MONITORING_KEYWORDS, SCRAPING_CONFIG
 from utils import ScrapingUtils, TextProcessor, ValidationUtils
@@ -375,22 +383,57 @@ class SeleniumScraper(BaseScraper):
     def __init__(self, borough_name: str):
         super().__init__(borough_name)
         self.driver = None
-        self.setup_driver()
+        if SELENIUM_AVAILABLE:
+            self.setup_driver()
+        else:
+            logger.warning(f"Selenium not available for {borough_name}. Install selenium and webdriver-manager for full functionality.")
     
     def setup_driver(self):
         """Setup Chrome WebDriver with appropriate options"""
+        if not SELENIUM_AVAILABLE:
+            logger.error("Selenium dependencies not available")
+            return
+            
         try:
             chrome_options = Options()
             chrome_options.add_argument('--headless')  # Run in background
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--disable-dev-tools')
+            chrome_options.add_argument('--no-zygote')
+            chrome_options.add_argument('--single-process')
+            chrome_options.add_argument('--remote-debugging-port=9222')
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_argument('--disable-plugins')
+            chrome_options.add_argument('--disable-images')
+            chrome_options.add_argument('--disable-javascript')
+            chrome_options.add_argument('--window-size=1920,1080')
             chrome_options.add_argument(f'--user-agent={SCRAPING_CONFIG["user_agent"]}')
             
-            self.driver = webdriver.Chrome(
-                ChromeDriverManager().install(),
-                options=chrome_options
-            )
+            # Try to use system chrome first (for cloud deployments)
+            chrome_binary_locations = [
+                '/usr/bin/chromium',
+                '/usr/bin/chromium-browser', 
+                '/usr/bin/google-chrome',
+                '/opt/google/chrome/chrome'
+            ]
+            
+            for binary in chrome_binary_locations:
+                if os.path.exists(binary):
+                    chrome_options.binary_location = binary
+                    break
+            
+            try:
+                # Try using ChromeDriverManager first
+                self.driver = webdriver.Chrome(
+                    service=Service(ChromeDriverManager().install()),
+                    options=chrome_options
+                )
+            except Exception:
+                # Fallback to system chromedriver
+                self.driver = webdriver.Chrome(options=chrome_options)
+                
             self.driver.set_page_load_timeout(SCRAPING_CONFIG['timeout'])
             logger.info(f"Selenium driver setup complete for {self.borough_name}")
             
@@ -400,6 +443,10 @@ class SeleniumScraper(BaseScraper):
     
     def scrape_applications(self, keywords: List[str] = None) -> List[Dict]:
         """Scrape applications using Selenium"""
+        if not SELENIUM_AVAILABLE:
+            logger.warning(f"Selenium not available for {self.borough_name}. Returning empty results.")
+            return []
+            
         if not self.driver:
             logger.error("Selenium driver not available")
             return []
