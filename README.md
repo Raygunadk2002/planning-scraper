@@ -36,6 +36,79 @@ This application automatically scrapes planning applications from London borough
 - Chrome/Chromium browser (for Selenium)
 - Internet connection
 
+## 🚀 Getting Started
+
+### Quick Setup
+```bash
+# Clone the repository
+git clone https://github.com/Raygunadk2002/planning-scraper.git
+cd planning-scraper
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the application
+streamlit run streamlit_app.py
+```
+
+### Viewing Scraper Outputs
+
+The application provides **ultra-granular real-time monitoring** with several ways to see exactly what the scrapers are doing:
+
+#### 1. **Live Activity Monitoring** 📊
+- Visit the **"🔍 Live Scraping Activity"** page in the Streamlit app
+- See real-time logs with millisecond timestamps
+- Track which URLs are being accessed
+- Monitor HTTP requests, response parsing, and data processing
+- Auto-refreshes every 2 seconds for live updates
+
+#### 2. **Borough Progress Tracking** 🎯
+- Real-time progress bars for each borough
+- Current keyword being searched
+- Completion status and timing
+- Request counters and processing metrics
+
+#### 3. **Database Results** 📈
+- View found applications in the **"📊 Data Dashboard"** page
+- Export results to CSV/Excel
+- Filter by borough, keywords, and dates
+- Statistics and analytics
+
+#### 4. **Command Line Testing** 🔬
+```bash
+# Test individual scrapers
+python3 test_scraping.py
+
+# View detailed logs
+python3 -c "
+from scraper_manager import ScrapingManager
+manager = ScrapingManager()
+result = manager.scrape_single_borough('Westminster', ['extension'])
+print(result)
+"
+```
+
+### ⚠️ Current Status: Anti-Bot Protection
+
+**Planning portals currently block automated searches** with HTTP 403 (Forbidden) responses due to:
+- CAPTCHA protection
+- Bot detection algorithms  
+- Rate limiting systems
+
+**Solutions:**
+1. **Manual verification** may be required for first-time access
+2. **Browser automation** (Selenium) can potentially bypass some protections
+3. **API access** from council developers would be ideal
+4. **Scheduled runs** during off-peak hours may have better success
+
+The system provides **full visibility** into the scraping process, so you can see exactly:
+- Which URLs are being accessed
+- HTTP response codes (200 success, 403 blocked, etc.)
+- Processing steps and timing
+- Any errors or issues
+
+This transparency makes debugging and optimization much easier!
+
 ## 🛠️ Installation
 
 1. **Clone the repository**:
