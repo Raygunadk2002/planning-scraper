@@ -79,7 +79,9 @@ class ScrapingManager:
         for borough_name in BOROUGHS_CONFIG.keys():
             try:
                 self.log_activity(f"Creating scraper instance...", borough_name)
-                scraper = create_scraper(borough_name)
+                
+                # Pass the log_activity method as the activity logger
+                scraper = create_scraper(borough_name, activity_logger=self.log_activity)
                 self.scrapers[borough_name] = scraper
                 
                 self.scraping_status[borough_name] = {
@@ -182,7 +184,7 @@ class ScrapingManager:
                 'current_phase': 'starting'
             })
             
-            # Get base configuration
+            # Get base configuration for URL tracking
             config = BOROUGHS_CONFIG[borough_name]
             base_url = config['base_url']
             search_url = config['search_url']
@@ -203,7 +205,7 @@ class ScrapingManager:
                 self.log_activity(f"🔍 Starting search for keyword: '{keyword}' ({i+1}/{len(keywords)})", borough_name)
                 self.update_progress(borough_name, keyword, i, len(keywords), "searching")
                 
-                # Update URL tracking
+                # Update URL tracking for the search
                 self.update_url_tracking(borough_name, search_url, f"Searching for '{keyword}'")
                 
                 try:
@@ -213,26 +215,26 @@ class ScrapingManager:
                     # Track the actual scraping call
                     if hasattr(scraper, 'search_keyword'):
                         self.log_activity(f"🕷️ Executing search request...", borough_name)
+                        
+                        # The scraper will now log its own detailed activity
                         keyword_apps = scraper.search_keyword(keyword)
                         
-                        # Update request counter
+                        # Update request counter (scrapers will report their own requests)
                         if borough_name in self.scraping_status:
                             self.scraping_status[borough_name]['requests_made'] += 1
                         
                         self.log_activity(f"✅ Search completed. Found {len(keyword_apps)} applications for '{keyword}'", borough_name)
                         
-                        # Process each application found
+                        # Update URL tracking for each application processed
                         for idx, app in enumerate(keyword_apps):
                             app_id = app.get('project_id', f'app_{idx}')
                             app_url = app.get('application_url', '')
                             
-                            self.log_activity(f"📄 Processing application {app_id}", borough_name)
-                            
                             if app_url:
-                                self.update_url_tracking(borough_name, app_url, f"Processing {app_id}")
+                                self.update_url_tracking(borough_name, app_url, f"Processed {app_id}")
                                 
-                                # Simulate processing delay to show URL tracking
-                                time.sleep(0.5)
+                                # Brief pause to show URL tracking
+                                time.sleep(0.2)
                                 
                                 if borough_name in self.scraping_status:
                                     self.scraping_status[borough_name]['pages_processed'] += 1
