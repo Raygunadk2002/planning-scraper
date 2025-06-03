@@ -32,6 +32,13 @@ class ScrapingManager:
         self.live_activity = []  # Store live activity logs
         self.url_tracking = {}  # Track current URLs being accessed
         
+        # Automatically initialize scrapers on creation
+        self.log_activity("🚀 ScrapingManager created, initializing scrapers...")
+        try:
+            self.initialize_scrapers()
+        except Exception as e:
+            self.log_activity(f"❌ Error during auto-initialization: {str(e)}", level="error")
+        
     def log_activity(self, message: str, borough: str = None, level: str = "info"):
         """Log activity with timestamp for real-time display"""
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
@@ -75,14 +82,21 @@ class ScrapingManager:
     def initialize_scrapers(self):
         """Initialize scrapers for all configured boroughs"""
         self.log_activity("🔧 Initializing scrapers for all boroughs...")
+        self.log_activity(f"📋 Found {len(BOROUGHS_CONFIG)} boroughs in config: {list(BOROUGHS_CONFIG.keys())}")
         
         for borough_name in BOROUGHS_CONFIG.keys():
             try:
                 self.log_activity(f"Creating scraper instance...", borough_name)
+                self.log_activity(f"📞 Calling create_scraper with borough_name='{borough_name}'", borough_name)
                 
                 # Pass the log_activity method as the activity logger
                 scraper = create_scraper(borough_name, activity_logger=self.log_activity)
+                
+                if scraper is None:
+                    raise Exception("create_scraper returned None")
+                
                 self.scrapers[borough_name] = scraper
+                self.log_activity(f"✅ Scraper created and stored: {type(scraper).__name__}", borough_name)
                 
                 self.scraping_status[borough_name] = {
                     'status': 'initialized',
@@ -107,6 +121,8 @@ class ScrapingManager:
                 
             except Exception as e:
                 self.log_activity(f"❌ Failed to initialize scraper: {str(e)}", borough_name, "error")
+                self.log_activity(f"🔍 Exception type: {type(e).__name__}", borough_name, "error")
+                
                 self.scraping_status[borough_name] = {
                     'status': 'error',
                     'last_run': None,
@@ -121,7 +137,9 @@ class ScrapingManager:
                     'current_phase': 'error'
                 }
         
-        self.log_activity(f"🎯 All scrapers initialized. Ready to begin scraping.")
+        self.log_activity(f"🎯 Scraper initialization complete. {len(self.scrapers)} scrapers available: {list(self.scrapers.keys())}")
+        if len(self.scrapers) == 0:
+            self.log_activity("⚠️ NO SCRAPERS WERE SUCCESSFULLY INITIALIZED!", level="error")
     
     def update_progress(self, borough_name: str, keyword: str = None, keyword_index: int = 0, total_keywords: int = 0, phase: str = None):
         """Update progress tracking for real-time display"""
@@ -358,13 +376,20 @@ class ScrapingManager:
     
     def scrape_all_boroughs(self, keywords: List[str] = None, max_workers: int = 3) -> List[Dict]:
         """Scrape all boroughs using threading for efficiency"""
+        # Ensure scrapers are initialized
         if not self.scrapers:
+            self.log_activity("⚠️ No scrapers found, reinitializing...", level="warning")
             self.initialize_scrapers()
+        
+        # Double-check that we have scrapers after initialization
+        if not self.scrapers:
+            self.log_activity("❌ Failed to initialize scrapers, cannot proceed", level="error")
+            return []
         
         self.is_running = True
         results = []
         
-        logger.info(f"Starting scraping for all {len(self.scrapers)} boroughs...")
+        self.log_activity(f"🚀 Starting scraping for all {len(self.scrapers)} boroughs...")
         
         # Use ThreadPoolExecutor to scrape multiple boroughs concurrently
         # but limit concurrent workers to avoid overwhelming servers
@@ -381,9 +406,9 @@ class ScrapingManager:
                 try:
                     result = future.result()
                     results.append(result)
-                    logger.info(f"Scraping completed for {borough}: {result}")
+                    self.log_activity(f"🎉 Scraping completed for {borough}: {result}")
                 except Exception as e:
-                    logger.error(f"Scraping failed for {borough}: {e}")
+                    self.log_activity(f"❌ Scraping failed for {borough}: {str(e)}", level="error")
                     results.append({
                         'success': False,
                         'borough': borough,
@@ -399,8 +424,8 @@ class ScrapingManager:
         total_new = sum(r.get('new_applications', 0) for r in successful)
         total_found = sum(r.get('total_found', 0) for r in successful)
         
-        logger.info(f"Scraping summary: {len(successful)} successful, {len(failed)} failed")
-        logger.info(f"Total applications: {total_new} new out of {total_found} found")
+        self.log_activity(f"📊 Scraping summary: {len(successful)} successful, {len(failed)} failed")
+        self.log_activity(f"📈 Total applications: {total_new} new out of {total_found} found")
         
         return results
     
